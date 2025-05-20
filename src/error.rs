@@ -50,4 +50,4 @@ pub enum OpenApiToMcpError {
 }
 
 /// A type alias for `Result<T, OpenApiToMcpError>`.
-pub type Result<T> = std::result::Result<T, OpenApiToMcpError>; 
+pub type Result<T> = std::result::Result<T, OpenApiToMcpError>;

@@ -129,7 +129,10 @@ const server = new McpServer({
         let request_options = match method_upper.as_str() {
             "GET" => "{\n        method: \"GET\"\n      }".to_string(),
             "POST" | "PUT" | "PATCH" => {
-                format!("{{\n        method: \"{}\",\n        headers: {{ \"Content-Type\": \"application/json\" }},\n        body: JSON.stringify(params)\n      }}", method_upper)
+                format!(
+                    "{{\n        method: \"{}\",\n        headers: {{ \"Content-Type\": \"application/json\" }},\n        body: JSON.stringify(params)\n      }}",
+                    method_upper
+                )
             }
             "DELETE" => {
                 if !params.is_empty() {
@@ -207,127 +210,21 @@ const server = new McpServer({
                 if let Some(json) = content.get("application/json") {
                     if let Some(schema) = json.get("schema") {
                         if let Some(ref_path) = schema.get("$ref").and_then(|r| r.as_str()) {
-                            // Handle schema reference
+                            // Handle schema reference.
                             if let Some(components) = self.openapi.get("components") {
                                 if let Some(schemas) = components.get("schemas") {
                                     if let Some(referenced_schema) = schemas
                                         .get(ref_path.trim_start_matches("#/components/schemas/"))
                                     {
-                                        if let Some(properties) =
-                                            referenced_schema.get("properties")
-                                        {
-                                            if let Some(props_obj) = properties.as_object() {
-                                                let required = referenced_schema
-                                                    .get("required")
-                                                    .and_then(|r| r.as_array())
-                                                    .map(|arr| {
-                                                        arr.iter()
-                                                            .filter_map(|v| v.as_str())
-                                                            .collect::<Vec<_>>()
-                                                    })
-                                                    .unwrap_or_default();
-
-                                                for (prop_name, prop_schema) in props_obj {
-                                                    let type_def = match prop_schema
-                                                        .get("type")
-                                                        .and_then(|t| t.as_str())
-                                                    {
-                                                        Some("string") => "z.string()",
-                                                        Some("number") => "z.number()",
-                                                        Some("integer") => "z.number().int()",
-                                                        Some("boolean") => "z.boolean()",
-                                                        Some("array") => {
-                                                            if let Some(items) =
-                                                                prop_schema.get("items")
-                                                            {
-                                                                if let Some(item_type) = items
-                                                                    .get("type")
-                                                                    .and_then(|t| t.as_str())
-                                                                {
-                                                                    match item_type {
-                                                                        "string" => "z.array(z.string())",
-                                                                        "number" => "z.array(z.number())",
-                                                                        "integer" => "z.array(z.number().int())",
-                                                                        "boolean" => "z.array(z.boolean())",
-                                                                        _ => "z.array(z.any())",
-                                                                    }
-                                                                } else {
-                                                                    "z.array(z.any())"
-                                                                }
-                                                            } else {
-                                                                "z.array(z.any())"
-                                                            }
-                                                        }
-                                                        _ => "z.any()",
-                                                    };
-
-                                                    let is_required =
-                                                        required.contains(&prop_name.as_str());
-                                                    let param_def = if is_required {
-                                                        format!("{}: {}", prop_name, type_def)
-                                                    } else {
-                                                        format!(
-                                                            "{}: {}.optional()",
-                                                            prop_name, type_def
-                                                        )
-                                                    };
-                                                    params.push(param_def);
-                                                }
-                                            }
-                                        }
+                                        self.process_schema_properties(
+                                            referenced_schema,
+                                            &mut params,
+                                        );
                                     }
                                 }
                             }
-                        } else if let Some(properties) = schema.get("properties") {
-                            if let Some(props_obj) = properties.as_object() {
-                                let required = schema
-                                    .get("required")
-                                    .and_then(|r| r.as_array())
-                                    .map(|arr| {
-                                        arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>()
-                                    })
-                                    .unwrap_or_default();
-
-                                for (prop_name, prop_schema) in props_obj {
-                                    let type_def = match prop_schema
-                                        .get("type")
-                                        .and_then(|t| t.as_str())
-                                    {
-                                        Some("string") => "z.string()",
-                                        Some("number") => "z.number()",
-                                        Some("integer") => "z.number().int()",
-                                        Some("boolean") => "z.boolean()",
-                                        Some("array") => {
-                                            if let Some(items) = prop_schema.get("items") {
-                                                if let Some(item_type) =
-                                                    items.get("type").and_then(|t| t.as_str())
-                                                {
-                                                    match item_type {
-                                                        "string" => "z.array(z.string())",
-                                                        "number" => "z.array(z.number())",
-                                                        "integer" => "z.array(z.number().int())",
-                                                        "boolean" => "z.array(z.boolean())",
-                                                        _ => "z.array(z.any())",
-                                                    }
-                                                } else {
-                                                    "z.array(z.any())"
-                                                }
-                                            } else {
-                                                "z.array(z.any())"
-                                            }
-                                        }
-                                        _ => "z.any()",
-                                    };
-
-                                    let is_required = required.contains(&prop_name.as_str());
-                                    let param_def = if is_required {
-                                        format!("{}: {}", prop_name, type_def)
-                                    } else {
-                                        format!("{}: {}.optional()", prop_name, type_def)
-                                    };
-                                    params.push(param_def);
-                                }
-                            }
+                        } else {
+                            self.process_schema_properties(schema, &mut params);
                         }
                     }
                 }
@@ -335,6 +232,71 @@ const server = new McpServer({
         }
 
         params
+    }
+
+    /// Processes the properties of a schema and adds them to the parameters list.
+    ///
+    /// # Arguments
+    ///
+    /// * `schema` - The schema object containing properties to process.
+    /// * `params` - A mutable reference to the vector where parameter definitions will be added.
+    fn process_schema_properties(&self, schema: &Value, params: &mut Vec<String>) {
+        if let Some(properties) = schema.get("properties") {
+            if let Some(props_obj) = properties.as_object() {
+                let required = schema
+                    .get("required")
+                    .and_then(|r| r.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
+                    .unwrap_or_default();
+
+                for (prop_name, prop_schema) in props_obj {
+                    let type_def = self.get_type_definition(prop_schema);
+                    let is_required = required.contains(&prop_name.as_str());
+                    let param_def = if is_required {
+                        format!("{}: {}", prop_name, type_def)
+                    } else {
+                        format!("{}: {}.optional()", prop_name, type_def)
+                    };
+                    params.push(param_def);
+                }
+            }
+        }
+    }
+
+    /// Determines the Zod type definition for a given schema.
+    ///
+    /// # Arguments
+    ///
+    /// * `schema` - The schema object to determine the type for.
+    ///
+    /// # Returns
+    ///
+    /// A string representing the Zod type definition.
+    fn get_type_definition(&self, schema: &Value) -> String {
+        match schema.get("type").and_then(|t| t.as_str()) {
+            Some("string") => "z.string()".to_string(),
+            Some("number") => "z.number()".to_string(),
+            Some("integer") => "z.number().int()".to_string(),
+            Some("boolean") => "z.boolean()".to_string(),
+            Some("array") => {
+                if let Some(items) = schema.get("items") {
+                    if let Some(item_type) = items.get("type").and_then(|t| t.as_str()) {
+                        match item_type {
+                            "string" => "z.array(z.string())".to_string(),
+                            "number" => "z.array(z.number())".to_string(),
+                            "integer" => "z.array(z.number().int())".to_string(),
+                            "boolean" => "z.array(z.boolean())".to_string(),
+                            _ => "z.array(z.any())".to_string(),
+                        }
+                    } else {
+                        "z.array(z.any())".to_string()
+                    }
+                } else {
+                    "z.array(z.any())".to_string()
+                }
+            }
+            _ => "z.any()".to_string(),
+        }
     }
 
     /// Appends the TypeScript code required to establish a server connection using
@@ -399,9 +361,9 @@ mod tests {
         let openapi = create_test_openapi();
         let generator = CodeGenerator::new(openapi.clone());
         let operation = openapi["paths"]["/test"]["get"].clone();
-        
+
         let params = generator.collect_parameters(&operation);
-        
+
         assert!(params.contains(&"queryParam: z.string().optional()".to_string()));
         assert!(params.contains(&"requiredField: z.string()".to_string()));
         assert!(params.contains(&"optionalField: z.number().optional()".to_string()));
@@ -412,10 +374,10 @@ mod tests {
         let openapi = create_test_openapi();
         let generator = CodeGenerator::new(openapi.clone());
         let operation = openapi["paths"]["/test"]["get"].clone();
-        
+
         let mut code = String::new();
         generator.generate_tool(&mut code, "/test", "get", &operation);
-        
+
         assert!(code.contains("testOperation"));
         assert!(code.contains("const search = new URLSearchParams()"));
         assert!(code.contains("method: \"GET\""));
@@ -425,10 +387,10 @@ mod tests {
     fn test_add_imports() {
         let openapi = create_test_openapi();
         let generator = CodeGenerator::new(openapi);
-        
+
         let mut code = String::new();
         generator.add_imports(&mut code);
-        
+
         assert!(code.contains("import { McpServer }"));
         assert!(code.contains("import { StdioServerTransport }"));
         assert!(code.contains("import dotenv"));
@@ -440,10 +402,10 @@ mod tests {
     fn test_add_server_connection() {
         let openapi = create_test_openapi();
         let generator = CodeGenerator::new(openapi);
-        
+
         let mut code = String::new();
         generator.add_server_connection(&mut code);
-        
+
         assert!(code.contains("const transport = new StdioServerTransport()"));
         assert!(code.contains("await server.connect(transport)"));
     }
@@ -452,9 +414,9 @@ mod tests {
     fn test_generate() {
         let openapi = create_test_openapi();
         let generator = CodeGenerator::new(openapi);
-        
+
         let code = generator.generate();
-        
+
         assert!(code.contains("import { McpServer }"));
         assert!(code.contains("testOperation"));
         assert!(code.contains("await server.connect(transport)"));

@@ -59,7 +59,9 @@ fn copy_dir_all(source: &Path, destination: &Path) -> Result<()> {
 fn generate_mcp_server(openapi_file: &Path, output_dir: &Path) -> Result<()> {
     // Check if the output directory already exists.
     if output_dir.exists() {
-        return Err(OpenApiToMcpError::OutputDirectoryExists(output_dir.to_path_buf()));
+        return Err(OpenApiToMcpError::OutputDirectoryExists(
+            output_dir.to_path_buf(),
+        ));
     }
 
     // Create the output directory.
@@ -71,14 +73,13 @@ fn generate_mcp_server(openapi_file: &Path, output_dir: &Path) -> Result<()> {
     if !templates_directory.exists() {
         return Err(OpenApiToMcpError::TemplatesDirectoryNotFound);
     }
-    copy_dir_all(templates_directory, output_dir)
-        .map_err(|_| OpenApiToMcpError::TemplatesCopy)?;
+    copy_dir_all(templates_directory, output_dir).map_err(|_| OpenApiToMcpError::TemplatesCopy)?;
 
     // Read and parse the OpenAPI specification.
     let content = fs::read_to_string(openapi_file)
         .map_err(|_| OpenApiToMcpError::OpenApiFileRead(openapi_file.to_path_buf()))?;
-    let openapi: Value = serde_json::from_str(&content)
-        .map_err(|_| OpenApiToMcpError::OpenApiParse)?;
+    let openapi: Value =
+        serde_json::from_str(&content).map_err(|_| OpenApiToMcpError::OpenApiParse)?;
 
     // Generate TypeScript code.
     let generator = CodeGenerator::new(openapi);
@@ -86,8 +87,7 @@ fn generate_mcp_server(openapi_file: &Path, output_dir: &Path) -> Result<()> {
 
     // Write index.ts to the output/src directory.
     let output_source = output_dir.join("src");
-    fs::create_dir_all(&output_source)
-        .map_err(|_| OpenApiToMcpError::SrcDirectoryCreation)?;
+    fs::create_dir_all(&output_source).map_err(|_| OpenApiToMcpError::SrcDirectoryCreation)?;
     fs::write(output_source.join("index.ts"), typescript)
         .map_err(|_| OpenApiToMcpError::IndexFileWrite)?;
 
