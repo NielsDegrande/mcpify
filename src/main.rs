@@ -1,13 +1,14 @@
 mod cli;
+mod error;
 mod generator;
 
-use anyhow::{Context, Result};
 use clap::Parser;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
 
 use crate::cli::Args;
+use crate::error::{OpenApiToMcpError, Result};
 use crate::generator::CodeGenerator;
 
 /// Recursively copies all files and subdirectories from the source directory to the destination directory.
@@ -45,54 +46,60 @@ fn copy_dir_all(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-fn main() -> Result<()> {
-    let arguments = Args::parse();
-
+/// Generates MCP server code from an OpenAPI specification.
+///
+/// # Arguments
+///
+/// * `openapi_file` - Path to the OpenAPI specification file.
+/// * `output_dir` - Directory where the generated code will be written.
+///
+/// # Returns
+///
+/// * `Result<()>` - Returns `Ok(())` if the generation succeeds, or an error if any step fails.
+fn generate_mcp_server(openapi_file: &Path, output_dir: &Path) -> Result<()> {
     // Check if the output directory already exists.
-    if arguments.output.exists() {
-        anyhow::bail!(
-            "Output directory already exists: {}. Please remove it or choose a different location.",
-            arguments.output.display()
-        );
+    if output_dir.exists() {
+        return Err(OpenApiToMcpError::OutputDirectoryExists(output_dir.to_path_buf()));
     }
 
     // Create the output directory.
-    fs::create_dir_all(&arguments.output).with_context(|| {
-        format!(
-            "Failed to create output directory: {}",
-            arguments.output.display()
-        )
-    })?;
+    fs::create_dir_all(output_dir)
+        .map_err(|_| OpenApiToMcpError::OutputDirectoryCreation(output_dir.to_path_buf()))?;
 
     // Copy the templates directory to the output directory.
     let templates_directory = Path::new("templates");
     if !templates_directory.exists() {
-        anyhow::bail!("Templates directory not found");
+        return Err(OpenApiToMcpError::TemplatesDirectoryNotFound);
     }
-    copy_dir_all(templates_directory, &arguments.output)
-        .with_context(|| "Failed to copy templates directory")?;
+    copy_dir_all(templates_directory, output_dir)
+        .map_err(|_| OpenApiToMcpError::TemplatesCopy)?;
 
     // Read and parse the OpenAPI specification.
-    let content = fs::read_to_string(&arguments.file)
-        .with_context(|| format!("Failed to read file: {}", arguments.file.display()))?;
-    let openapi: Value =
-        serde_json::from_str(&content).with_context(|| "Failed to parse OpenAPI spec as JSON")?;
+    let content = fs::read_to_string(openapi_file)
+        .map_err(|_| OpenApiToMcpError::OpenApiFileRead(openapi_file.to_path_buf()))?;
+    let openapi: Value = serde_json::from_str(&content)
+        .map_err(|_| OpenApiToMcpError::OpenApiParse)?;
 
     // Generate TypeScript code.
     let generator = CodeGenerator::new(openapi);
     let typescript = generator.generate();
 
     // Write index.ts to the output/src directory.
-    let output_source = arguments.output.join("src");
+    let output_source = output_dir.join("src");
     fs::create_dir_all(&output_source)
-        .with_context(|| "Failed to create src directory in output".to_string())?;
+        .map_err(|_| OpenApiToMcpError::SrcDirectoryCreation)?;
     fs::write(output_source.join("index.ts"), typescript)
-        .with_context(|| "Failed to write index.ts")?;
+        .map_err(|_| OpenApiToMcpError::IndexFileWrite)?;
 
     println!(
         "Successfully generated TypeScript code in: {}",
-        arguments.output.display()
+        output_dir.display()
     );
 
     Ok(())
+}
+
+fn main() -> Result<()> {
+    let args = Args::parse();
+    generate_mcp_server(&args.file, &args.output)
 }
