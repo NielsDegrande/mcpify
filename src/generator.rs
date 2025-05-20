@@ -349,3 +349,114 @@ const server = new McpServer({
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn create_test_openapi() -> Value {
+        json!({
+            "paths": {
+                "/test": {
+                    "get": {
+                        "operationId": "testOperation",
+                        "parameters": [
+                            {
+                                "name": "queryParam",
+                                "in": "query",
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        ],
+                        "requestBody": {
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "requiredField": {
+                                                "type": "string"
+                                            },
+                                            "optionalField": {
+                                                "type": "number"
+                                            }
+                                        },
+                                        "required": ["requiredField"]
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn test_collect_parameters() {
+        let openapi = create_test_openapi();
+        let generator = CodeGenerator::new(openapi.clone());
+        let operation = openapi["paths"]["/test"]["get"].clone();
+        
+        let params = generator.collect_parameters(&operation);
+        
+        assert!(params.contains(&"queryParam: z.string().optional()".to_string()));
+        assert!(params.contains(&"requiredField: z.string()".to_string()));
+        assert!(params.contains(&"optionalField: z.number().optional()".to_string()));
+    }
+
+    #[test]
+    fn test_generate_tool() {
+        let openapi = create_test_openapi();
+        let generator = CodeGenerator::new(openapi.clone());
+        let operation = openapi["paths"]["/test"]["get"].clone();
+        
+        let mut code = String::new();
+        generator.generate_tool(&mut code, "/test", "get", &operation);
+        
+        assert!(code.contains("testOperation"));
+        assert!(code.contains("const search = new URLSearchParams()"));
+        assert!(code.contains("method: \"GET\""));
+    }
+
+    #[test]
+    fn test_add_imports() {
+        let openapi = create_test_openapi();
+        let generator = CodeGenerator::new(openapi);
+        
+        let mut code = String::new();
+        generator.add_imports(&mut code);
+        
+        assert!(code.contains("import { McpServer }"));
+        assert!(code.contains("import { StdioServerTransport }"));
+        assert!(code.contains("import dotenv"));
+        assert!(code.contains("import { z }"));
+        assert!(code.contains("const server = new McpServer"));
+    }
+
+    #[test]
+    fn test_add_server_connection() {
+        let openapi = create_test_openapi();
+        let generator = CodeGenerator::new(openapi);
+        
+        let mut code = String::new();
+        generator.add_server_connection(&mut code);
+        
+        assert!(code.contains("const transport = new StdioServerTransport()"));
+        assert!(code.contains("await server.connect(transport)"));
+    }
+
+    #[test]
+    fn test_generate() {
+        let openapi = create_test_openapi();
+        let generator = CodeGenerator::new(openapi);
+        
+        let code = generator.generate();
+        
+        assert!(code.contains("import { McpServer }"));
+        assert!(code.contains("testOperation"));
+        assert!(code.contains("await server.connect(transport)"));
+    }
+}

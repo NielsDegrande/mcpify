@@ -20,4 +20,5 @@ target/release/mcpify --file openapi.json --output mcp-server
 ```bash
 cargo clippy # --fix
 cargo fmt
+cargo test
 ```
