@@ -1,0 +1,5 @@
+/target
+
+# Application specific.
+openapi.json
+mcp-server
